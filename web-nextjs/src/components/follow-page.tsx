@@ -53,14 +53,19 @@ export function FollowPage() {
             Authorization: `Bearer ${token}`,
           },
         });
-        const payload = await response.json();
+        const raw = await response.text();
+        const payload = raw ? JSON.parse(raw) : null;
 
         if (!response.ok) {
-          throw new Error(payload.message ?? "Failed to load users.");
+          throw new Error(payload?.message ?? "Failed to load users.");
         }
 
         if (!cancelled) {
-          setUsers(payload as DirectoryUser[]);
+          setUsers((payload ?? []) as DirectoryUser[]);
+        }
+      } catch {
+        if (!cancelled) {
+          setUsers([]);
         }
       } finally {
         if (!cancelled) {
