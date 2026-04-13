@@ -27,7 +27,7 @@ serta 3 komponen infrastructure:
 
 ## Demo Preview
 
-<video src="media/chat-demo.mp4" autoplay loop muted playsinline width="100%"></video>
+![Distributed Chat Demo](media/chat-demo.gif)
 
 ## Table of Contents
 
