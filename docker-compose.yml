@@ -1,0 +1,156 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: chat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: postgres
+    ports:
+      - "${HOST_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - chat-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: chat-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-guest}
+    ports:
+      - "${HOST_RABBITMQ_PORT:-5672}:5672"
+      - "${HOST_RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - chat-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: chat-redis
+    restart: unless-stopped
+    ports:
+      - "${HOST_REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - chat-network
+
+  chat-service-java:
+    build:
+      context: ./chat-service-java
+      dockerfile: Dockerfile
+    container_name: chat-service-java
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      SERVER_PORT: 8080
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_CHAT_DB:-chat_service_db}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-guest}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-guest}
+    ports:
+      - "8080:8080"
+    networks:
+      - chat-network
+
+  gateway-dotnet:
+    build:
+      context: ./gateway-dotnet
+      dockerfile: Dockerfile
+    container_name: gateway-dotnet
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      chat-service-java:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: http://+:5001
+      ConnectionStrings__PostgreSql: Host=postgres;Port=5432;Database=${POSTGRES_GATEWAY_DB:-gateway_dotnet_dev};Username=${POSTGRES_USER:-postgres};Password=${POSTGRES_PASSWORD:-postgres}
+      ChatService__BaseUrl: http://chat-service-java:8080
+      Jwt__Issuer: ${JWT_ISSUER:-gateway-dotnet}
+      Jwt__Audience: ${JWT_AUDIENCE:-gateway-dotnet-clients}
+      Jwt__SecretKey: ${JWT_SECRET_KEY:-replace-with-a-long-random-jwt-secret-key}
+      Jwt__ExpiryMinutes: ${JWT_EXPIRY_MINUTES:-60}
+      GoogleOAuth__ClientId: ${GOOGLE_CLIENT_ID:-replace-with-google-client-id}
+      GoogleOAuth__ClientSecret: ${GOOGLE_CLIENT_SECRET:-replace-with-google-client-secret}
+      GoogleOAuth__CallbackUrl: ${GOOGLE_CALLBACK_URL:-http://localhost:5001/api/auth/google/callback}
+      Redis__Host: redis
+      Redis__Port: 6379
+      Redis__MessagesPerMinuteLimit: 20
+    ports:
+      - "5001:5001"
+    networks:
+      - chat-network
+
+  realtime-dotnet:
+    build:
+      context: ./realtime-dotnet
+      dockerfile: Dockerfile
+    container_name: realtime-dotnet
+    restart: unless-stopped
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gateway-dotnet:
+        condition: service_started
+    environment:
+      ASPNETCORE_URLS: http://+:5002
+      Jwt__Issuer: ${JWT_ISSUER:-gateway-dotnet}
+      Jwt__Audience: ${JWT_AUDIENCE:-gateway-dotnet-clients}
+      Jwt__SecretKey: ${JWT_SECRET_KEY:-replace-with-a-long-random-jwt-secret-key}
+      RabbitMq__Exchange: chat.exchange
+      RabbitMq__RoutingKey: message.created
+      RabbitMq__Host: rabbitmq
+      RabbitMq__Port: 5672
+      RabbitMq__Username: ${RABBITMQ_DEFAULT_USER:-guest}
+      RabbitMq__Password: ${RABBITMQ_DEFAULT_PASS:-guest}
+      RabbitMq__QueueName: chat.message.created.queue
+      RabbitMq__DeliveredQueueName: chat.message.delivered.queue
+      RabbitMq__DeliveredRoutingKey: message.delivered
+      RabbitMq__ReadQueueName: chat.message.read.queue
+      RabbitMq__ReadRoutingKey: message.read
+      Redis__Host: redis
+      Redis__Port: 6379
+      Redis__PresenceKeyPrefix: presence
+      Redis__PresenceTtlSeconds: 120
+      Gateway__BaseUrl: http://gateway-dotnet:5001
+    ports:
+      - "5002:5002"
+    networks:
+      - chat-network
+
+volumes:
+  postgres_data:
+
+networks:
+  chat-network:
+    driver: bridge

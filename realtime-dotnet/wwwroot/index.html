@@ -1,0 +1,697 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mini Chat Demo</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/microsoft-signalr/8.0.7/signalr.min.js"></script>
+  <style>
+    :root {
+      --bg: #eef5f2;
+      --panel: #ffffff;
+      --ink: #17312d;
+      --muted: #64807a;
+      --line: #d9e8e2;
+      --primary: #116466;
+      --primary-soft: #d8f3ef;
+      --danger: #b42318;
+      --self: #d9f8ea;
+      --other: #f5f7f9;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: linear-gradient(180deg, #f8fcfa 0%, var(--bg) 100%);
+      color: var(--ink);
+    }
+    .shell {
+      max-width: 1180px;
+      margin: 24px auto;
+      padding: 0 18px 24px;
+    }
+    .hero { margin-bottom: 18px; }
+    .hero h1 { margin: 0 0 8px; font-size: 34px; }
+    .hero p { margin: 0; color: var(--muted); line-height: 1.6; }
+    .layout {
+      display: grid;
+      grid-template-columns: 360px minmax(0, 1fr);
+      gap: 18px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      padding: 18px;
+      box-shadow: 0 18px 40px rgba(17, 100, 102, 0.08);
+    }
+    .stack > * + * { margin-top: 14px; }
+    label { display: block; margin-bottom: 8px; font-weight: 700; font-size: 14px; }
+    input, textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 12px 14px;
+      font: inherit;
+      background: #fff;
+      color: var(--ink);
+    }
+    textarea { min-height: 120px; resize: vertical; }
+    .inline { display: flex; gap: 10px; flex-wrap: wrap; }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 12px 18px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .primary { background: var(--primary); color: #fff; }
+    .secondary { background: var(--primary-soft); color: var(--primary); }
+    .danger { background: #fee4e2; color: var(--danger); }
+    .status {
+      display: inline-flex;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #eef2ff;
+      color: #3730a3;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .status.connected { background: #dcfae6; color: #067647; }
+    .meta, .hint { color: var(--muted); line-height: 1.55; font-size: 14px; }
+    code { background: rgba(17,100,102,0.08); padding: 2px 6px; border-radius: 8px; }
+    .card {
+      background: linear-gradient(135deg, rgba(17,100,102,0.08), rgba(255,255,255,0.8));
+      border-radius: 18px;
+      padding: 14px;
+    }
+    .card strong { display: block; font-size: 18px; margin-bottom: 4px; }
+    .workspace {
+      display: grid;
+      grid-template-rows: auto minmax(420px, 1fr) auto;
+      gap: 14px;
+      min-height: 760px;
+    }
+    .topgrid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .messages {
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      padding: 18px;
+      overflow: auto;
+      background: linear-gradient(180deg, #fff 0%, #f6fbf9 100%);
+    }
+    .empty { color: var(--muted); }
+    .message {
+      max-width: 72%;
+      padding: 12px 14px;
+      border-radius: 18px;
+      margin-bottom: 12px;
+      box-shadow: 0 10px 18px rgba(15,23,42,0.04);
+    }
+    .self { margin-left: auto; background: var(--self); border-bottom-right-radius: 6px; }
+    .other { margin-right: auto; background: var(--other); border-bottom-left-radius: 6px; }
+    .who { font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+    .body { white-space: pre-wrap; line-height: 1.55; word-break: break-word; }
+    .stamp { margin-top: 8px; font-size: 12px; color: var(--muted); }
+    .composer {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: end;
+    }
+    .composer textarea { min-height: 90px; }
+    .log {
+      background: #0f172a;
+      color: #dbeafe;
+      border-radius: 18px;
+      padding: 14px;
+      min-height: 180px;
+      max-height: 260px;
+      overflow: auto;
+      white-space: pre-wrap;
+      font-family: Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    @media (max-width: 980px) {
+      .layout, .topgrid, .composer { grid-template-columns: 1fr; }
+      .workspace { min-height: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hero">
+      <h1>Mini Chat Demo</h1>
+      <p>Halaman ini dipakai untuk demo dua akun. Dari sini kamu bisa load profil dari gateway, connect ke SignalR, ambil histori conversation, lalu kirim pesan sungguhan lewat jalur backend yang benar: gateway -> Java -> RabbitMQ -> realtime.</p>
+    </div>
+
+    <div class="layout">
+      <div class="panel stack">
+        <div id="statusBadge" class="status">Realtime Disconnected</div>
+        <div class="hint">Flow baru: klik login Google, selesai OAuth kamu otomatis balik ke page ini dengan token tersimpan lokal.</div>
+        <div>
+          <label for="token">JWT Token</label>
+          <textarea id="token" placeholder="Paste JWT dari gateway di sini"></textarea>
+          <div id="tokenInfo" class="hint">Belum ada token yang dibaca.</div>
+        </div>
+
+        <div class="inline">
+          <button id="loginBtn" class="primary" type="button">Login with Google</button>
+          <button id="loadProfileBtn" class="secondary" type="button">Load My Profile</button>
+          <button id="connectBtn" class="primary" type="button">Connect Realtime</button>
+          <button id="disconnectBtn" class="danger" type="button">Disconnect</button>
+          <button id="logoutBtn" class="danger" type="button">Clear Session</button>
+        </div>
+
+        <div class="card">
+          <strong id="currentUserName">Belum login</strong>
+          <div id="currentUserMeta" class="meta">Load profile untuk melihat user internal dari gateway.</div>
+        </div>
+
+        <div class="card">
+          <strong>Presence Snapshot</strong>
+          <div id="presenceMeta" class="meta">Presence belum dicek.</div>
+        </div>
+
+        <div>
+          <label for="receiverId">Receiver User ID</label>
+          <input id="receiverId" placeholder="tempel user id akun tujuan" />
+        </div>
+
+        <div>
+          <label for="conversationId">Conversation ID</label>
+          <input id="conversationId" value="conv-demo-001" />
+          <div class="hint">Untuk tahap demo, isi manual conversation id yang sama di dua akun agar histori chat berada di room yang sama.</div>
+        </div>
+
+        <div class="inline">
+          <button id="loadConversationBtn" class="secondary" type="button">Load Conversation</button>
+          <button id="markReadBtn" class="secondary" type="button">Mark Visible As Read</button>
+          <button id="clearLogBtn" class="secondary" type="button">Clear Log</button>
+        </div>
+
+        <div>
+          <h3 style="margin:0 0 10px;">Live Log</h3>
+          <div id="log" class="log"></div>
+        </div>
+      </div>
+
+      <div class="panel workspace">
+        <div class="topgrid">
+          <div>
+            <h2 style="margin:0 0 8px;">Conversation Room</h2>
+            <div id="roomMeta" class="meta">Isi receiver dan conversation id, lalu connect realtime dan load conversation.</div>
+          </div>
+          <div>
+            <h2 style="margin:0 0 8px;">Realtime State</h2>
+            <div id="connectionMeta" class="meta">Belum ada koneksi SignalR aktif.</div>
+          </div>
+        </div>
+
+        <div id="messages" class="messages">
+          <div class="empty">Belum ada pesan. Load conversation atau kirim pesan pertama untuk mulai test dua akun.</div>
+        </div>
+
+        <div>
+          <label for="messageInput">New Message</label>
+          <div class="composer">
+            <textarea id="messageInput" placeholder="Ketik pesan lalu tekan Send Message. Request akan diteruskan ke gateway, disimpan di Java, dipublish ke RabbitMQ, lalu receiver online akan menerima realtime."></textarea>
+            <button id="sendMessageBtn" class="primary" type="button">Send Message</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let connection = null;
+    let currentUserId = "";
+    let currentConversationId = "";
+    let currentMessages = [];
+
+    const tokenInput = document.getElementById("token");
+    const receiverIdInput = document.getElementById("receiverId");
+    const conversationIdInput = document.getElementById("conversationId");
+    const messageInput = document.getElementById("messageInput");
+    const messagesElement = document.getElementById("messages");
+    const logElement = document.getElementById("log");
+    const tokenInfo = document.getElementById("tokenInfo");
+    const statusBadge = document.getElementById("statusBadge");
+    const currentUserNameElement = document.getElementById("currentUserName");
+    const currentUserMetaElement = document.getElementById("currentUserMeta");
+    const presenceMetaElement = document.getElementById("presenceMeta");
+    const roomMetaElement = document.getElementById("roomMeta");
+    const connectionMetaElement = document.getElementById("connectionMeta");
+    const tokenStorageKey = "mini-chat-demo.jwt";
+
+    function log(message, data) {
+      const timestamp = new Date().toISOString();
+      const lines = [`[${timestamp}] ${message}`];
+      if (data !== undefined) {
+        lines.push(typeof data === "string" ? data : JSON.stringify(data, null, 2));
+      }
+      logElement.textContent += lines.join("\n") + "\n\n";
+      logElement.scrollTop = logElement.scrollHeight;
+    }
+
+    function setStatus(text, connected) {
+      statusBadge.textContent = text;
+      statusBadge.className = connected ? "status connected" : "status";
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function decodeJwtPayload(token) {
+      const parts = token.split(".");
+      if (parts.length !== 3) throw new Error("Format JWT tidak valid.");
+      const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+      const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
+      return JSON.parse(atob(padded));
+    }
+
+    function getToken() { return tokenInput.value.trim(); }
+    function getConversationId() { return conversationIdInput.value.trim(); }
+
+    function buildGatewayLoginUrl() {
+      const returnUrl = "http://localhost:5002/";
+      return `http://localhost:5001/api/auth/google/login?returnUrl=${encodeURIComponent(returnUrl)}`;
+    }
+
+    function saveToken(token) {
+      localStorage.setItem(tokenStorageKey, token);
+      tokenInput.value = token;
+      refreshTokenInfo();
+    }
+
+    function clearStoredToken() {
+      localStorage.removeItem(tokenStorageKey);
+      tokenInput.value = "";
+      refreshTokenInfo();
+    }
+
+    function bootstrapTokenFromHash() {
+      if (!window.location.hash || !window.location.hash.includes("accessToken=")) {
+        return null;
+      }
+
+      const hash = window.location.hash.startsWith("#") ? window.location.hash.substring(1) : window.location.hash;
+      const params = new URLSearchParams(hash);
+      const accessToken = params.get("accessToken");
+
+      if (!accessToken) {
+        return null;
+      }
+
+      saveToken(accessToken);
+      history.replaceState({}, document.title, window.location.pathname);
+      log("OAuth login success. Token imported from gateway redirect.");
+      return accessToken;
+    }
+
+    function restoreTokenFromStorage() {
+      const token = localStorage.getItem(tokenStorageKey);
+
+      if (token) {
+        tokenInput.value = token;
+        refreshTokenInfo();
+      }
+    }
+
+    function refreshTokenInfo() {
+      const token = getToken();
+      if (!token) {
+        tokenInfo.textContent = "Belum ada token yang dibaca.";
+        return;
+      }
+
+      try {
+        const payload = decodeJwtPayload(token);
+        const expiresAt = payload.exp ? new Date(payload.exp * 1000) : null;
+        const expired = expiresAt ? expiresAt <= new Date() : false;
+        const userId = payload.sub || payload["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] || "(tidak ada sub)";
+        const email = payload.email || payload["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"] || "(tidak ada email)";
+
+        tokenInfo.innerHTML =
+          `Decoded user: <code>${userId}</code><br>` +
+          `Email: <code>${email}</code><br>` +
+          `Expires At: <code>${expiresAt ? expiresAt.toISOString() : "tidak ada exp"}</code><br>` +
+          `Status: <strong style="color:${expired ? "#b42318" : "#067647"}">${expired ? "EXPIRED" : "VALID"}</strong>`;
+      } catch (error) {
+        tokenInfo.textContent = `Token tidak bisa dibaca: ${error}`;
+      }
+    }
+
+    function refreshRoomMeta() {
+      const receiverId = receiverIdInput.value.trim() || "(belum diisi)";
+      const conversationId = getConversationId() || "(belum diisi)";
+      roomMetaElement.innerHTML =
+        `Current conversation: <code>${conversationId}</code><br>` +
+        `Receiver target: <code>${receiverId}</code>`;
+    }
+
+    async function postJson(url, body) {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url);
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function formatPresence(presence) {
+      if (presence.isOnline) {
+        return `Status: <strong style="color:#067647">Online</strong><br>Last seen: <code>null</code>`;
+      }
+
+      if (presence.lastSeenAt) {
+        return `Status: <strong style="color:#b42318">Offline</strong><br>Last seen: <code>${presence.lastSeenAt}</code>`;
+      }
+
+      return `Status: <strong>Offline</strong><br>Last seen: <code>belum ada data</code>`;
+    }
+
+    async function refreshPresence(userId = currentUserId) {
+      if (!userId) {
+        presenceMetaElement.textContent = "Presence belum dicek.";
+        return;
+      }
+
+      try {
+        const presence = await fetchJson(`/api/presence/${encodeURIComponent(userId)}`);
+        presenceMetaElement.innerHTML =
+          `User ID: <code>${presence.userId}</code><br>${formatPresence(presence)}`;
+        log("Presence checked", presence);
+      } catch (error) {
+        presenceMetaElement.textContent = `Presence check gagal: ${error}`;
+        log("Presence check failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    function renderMessages(messages) {
+      currentMessages = Array.isArray(messages) ? messages : [];
+
+      if (!messages || messages.length === 0) {
+        messagesElement.innerHTML = `<div class="empty">Belum ada pesan untuk conversation ini.</div>`;
+        return;
+      }
+
+      messagesElement.innerHTML = messages.map(message => {
+        const isSelf = currentUserId && message.senderId === currentUserId;
+        const who = isSelf ? "You" : `From ${escapeHtml(message.senderId)}`;
+        const stamp = new Date(message.createdAt || message.timestamp).toLocaleString();
+        const status = escapeHtml(message.status || "unknown");
+
+        return `
+          <div class="message ${isSelf ? "self" : "other"}">
+            <div class="who">${who}</div>
+            <div class="body">${escapeHtml(message.content)}</div>
+            <div class="stamp">${stamp} · status: <code>${status}</code></div>
+          </div>
+        `;
+      }).join("");
+
+      messagesElement.scrollTop = messagesElement.scrollHeight;
+    }
+
+    function appendMessage(message) {
+      currentMessages.push(message);
+
+      const empty = messagesElement.querySelector(".empty");
+      if (empty) messagesElement.innerHTML = "";
+
+      const isSelf = currentUserId && message.senderId === currentUserId;
+      const stamp = new Date(message.createdAt || message.timestamp).toLocaleString();
+      const status = escapeHtml(message.status || "unknown");
+      const item = document.createElement("div");
+      item.className = `message ${isSelf ? "self" : "other"}`;
+      item.innerHTML = `
+        <div class="who">${isSelf ? "You" : `From ${escapeHtml(message.senderId)}`}</div>
+        <div class="body">${escapeHtml(message.content)}</div>
+        <div class="stamp">${stamp} · status: <code>${status}</code></div>
+      `;
+      messagesElement.appendChild(item);
+      messagesElement.scrollTop = messagesElement.scrollHeight;
+    }
+
+    function getUnreadIncomingMessageIds() {
+      return currentMessages
+        .filter(message =>
+          message &&
+          message.id &&
+          message.senderId &&
+          message.senderId !== currentUserId &&
+          (message.status || "").toLowerCase() !== "read")
+        .map(message => message.id);
+    }
+
+    async function loadProfile() {
+      const token = getToken();
+      if (!token) {
+        log("JWT token masih kosong.");
+        return;
+      }
+
+      try {
+        const profile = await postJson("/api/dev/chat/me", { jwtToken: token });
+        currentUserId = profile.id;
+        currentUserNameElement.textContent = profile.name || profile.email || profile.id;
+        currentUserMetaElement.innerHTML =
+          `User ID: <code>${profile.id}</code><br>` +
+          `Email: <code>${profile.email}</code><br>` +
+          `Provider: <code>${profile.provider}</code>`;
+        connectionMetaElement.innerHTML = `Siap connect sebagai <code>${profile.id}</code>.`;
+        await refreshPresence(profile.id);
+        log("Current user loaded", profile);
+      } catch (error) {
+        log("Load profile failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    async function connectRealtime() {
+      const token = getToken();
+      if (!token) {
+        log("JWT token masih kosong.");
+        return;
+      }
+
+      if (connection) {
+        await disconnectRealtime();
+      }
+
+      connection = new signalR.HubConnectionBuilder()
+        .withUrl("/hubs/chat", { accessTokenFactory: () => token })
+        .withAutomaticReconnect()
+        .build();
+
+      connection.on("message.received", payload => {
+        log("EVENT message.received", payload);
+        if (!currentConversationId || payload.conversationId === currentConversationId) {
+          appendMessage({
+            senderId: payload.senderId,
+            content: payload.content,
+            timestamp: payload.timestamp
+          });
+        }
+      });
+
+      connection.onreconnecting(error => {
+        setStatus("Realtime Reconnecting...", false);
+        connectionMetaElement.textContent = "Koneksi sedang mencoba tersambung ulang.";
+        log("SignalR reconnecting", error?.toString() ?? "unknown error");
+      });
+
+      connection.onreconnected(connectionId => {
+        setStatus("Realtime Connected", true);
+        connectionMetaElement.innerHTML = `Reconnected with connectionId <code>${connectionId}</code>.`;
+        log("SignalR reconnected", { connectionId });
+      });
+
+      connection.onclose(error => {
+        setStatus("Realtime Disconnected", false);
+        connectionMetaElement.textContent = "Koneksi realtime tertutup.";
+        log("SignalR connection closed", error?.toString() ?? "closed normally");
+      });
+
+      try {
+        await connection.start();
+        setStatus("Realtime Connected", true);
+        connectionMetaElement.innerHTML = `Connected with connectionId <code>${connection.connectionId}</code>.`;
+        await refreshPresence();
+        log("SignalR connected", { connectionId: connection.connectionId });
+      } catch (error) {
+        setStatus("Realtime Disconnected", false);
+        connectionMetaElement.textContent = "Gagal connect ke hub.";
+        log("SignalR connect failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    async function disconnectRealtime() {
+      if (!connection) return;
+      await connection.stop();
+      connection = null;
+      setStatus("Realtime Disconnected", false);
+      connectionMetaElement.textContent = "Koneksi realtime dimatikan manual.";
+      await refreshPresence();
+      log("SignalR disconnected manually");
+    }
+
+    async function loadConversation() {
+      const token = getToken();
+      const conversationId = getConversationId();
+      if (!token || !conversationId) {
+        log("JWT token dan conversation id wajib diisi.");
+        return;
+      }
+
+      try {
+        const messages = await postJson("/api/dev/chat/conversation", {
+          jwtToken: token,
+          conversationId
+        });
+        currentConversationId = conversationId;
+        renderMessages(messages);
+        refreshRoomMeta();
+        log("Conversation loaded", { conversationId, count: messages.length });
+      } catch (error) {
+        log("Load conversation failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    async function sendMessage() {
+      const token = getToken();
+      const conversationId = getConversationId();
+      const receiverId = receiverIdInput.value.trim();
+      const content = messageInput.value.trim();
+
+      if (!token || !conversationId || !receiverId || !content) {
+        log("JWT, receiver id, conversation id, dan message content wajib diisi.");
+        return;
+      }
+
+      try {
+        const message = await postJson("/api/dev/chat/send", {
+          jwtToken: token,
+          conversationId,
+          receiverId,
+          content
+        });
+        currentConversationId = conversationId;
+        appendMessage(message);
+        messageInput.value = "";
+        refreshRoomMeta();
+        log("Message sent through gateway", message);
+      } catch (error) {
+        log("Send message failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    async function markVisibleMessagesAsRead() {
+      const conversationId = getConversationId();
+
+      if (!currentUserId) {
+        log("Load profile dulu sebelum mark as read.");
+        return;
+      }
+
+      if (!conversationId) {
+        log("Conversation id wajib diisi.");
+        return;
+      }
+
+      const messageIds = getUnreadIncomingMessageIds();
+
+      if (messageIds.length === 0) {
+        log("Tidak ada incoming message yang perlu ditandai read di conversation ini.");
+        return;
+      }
+
+      try {
+        const result = await postJson("/api/internal/messages/read", {
+          conversationId,
+          userId: currentUserId,
+          messageIds
+        });
+
+        log("Read receipt published from UI", result);
+        await loadConversation();
+      } catch (error) {
+        log("Mark as read failed", error?.toString() ?? "unknown error");
+      }
+    }
+
+    function loginWithGoogle() {
+      window.location.href = buildGatewayLoginUrl();
+    }
+
+    async function logoutSession() {
+      await disconnectRealtime();
+      currentUserId = "";
+      currentConversationId = "";
+      currentUserNameElement.textContent = "Belum login";
+      currentUserMetaElement.textContent = "Load profile untuk melihat user internal dari gateway.";
+      presenceMetaElement.textContent = "Presence belum dicek.";
+      connectionMetaElement.textContent = "Belum ada koneksi SignalR aktif.";
+      currentMessages = [];
+      messagesElement.innerHTML = `<div class="empty">Session dibersihkan. Login ulang untuk mulai chat lagi.</div>`;
+      clearStoredToken();
+      log("Local session cleared.");
+    }
+
+    document.getElementById("loginBtn").addEventListener("click", loginWithGoogle);
+    document.getElementById("loadProfileBtn").addEventListener("click", loadProfile);
+    document.getElementById("connectBtn").addEventListener("click", connectRealtime);
+    document.getElementById("disconnectBtn").addEventListener("click", disconnectRealtime);
+    document.getElementById("logoutBtn").addEventListener("click", logoutSession);
+    document.getElementById("loadConversationBtn").addEventListener("click", loadConversation);
+    document.getElementById("markReadBtn").addEventListener("click", markVisibleMessagesAsRead);
+    document.getElementById("sendMessageBtn").addEventListener("click", sendMessage);
+    document.getElementById("clearLogBtn").addEventListener("click", () => logElement.textContent = "");
+    tokenInput.addEventListener("input", () => {
+      const token = getToken();
+      if (token) {
+        localStorage.setItem(tokenStorageKey, token);
+      } else {
+        localStorage.removeItem(tokenStorageKey);
+      }
+      refreshTokenInfo();
+    });
+    receiverIdInput.addEventListener("input", refreshRoomMeta);
+    conversationIdInput.addEventListener("input", refreshRoomMeta);
+
+    const importedToken = bootstrapTokenFromHash();
+    restoreTokenFromStorage();
+    refreshTokenInfo();
+    refreshRoomMeta();
+    log("Mini chat demo ready. Kamu bisa login Google langsung dari page ini.");
+
+    if (importedToken) {
+      loadProfile().then(() => connectRealtime());
+    }
+  </script>
+</body>
+</html>

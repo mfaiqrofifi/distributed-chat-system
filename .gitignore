@@ -1,0 +1,25 @@
+.env
+.env.*
+!.env.example
+
+# Local application secrets
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+**/application-local.yml
+**/application-local.yaml
+**/secrets/
+
+# Certificates and keys
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
+
+# Common IDE / build outputs
+**/bin/
+**/obj/
+**/target/
+.vs/
+.idea/
+.vscode/

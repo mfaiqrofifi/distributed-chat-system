@@ -1,0 +1,38 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: chat-service-java
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: guest
+    password: guest
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/chat_service_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:change-me}
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+  jackson:
+    time-zone: UTC
+
+logging:
+  level:
+    org.springframework.web: INFO
+
+chat:
+  messaging:
+    exchange: chat.exchange
+    queue: chat.message.created.queue
+    routing-key: message.created
+    delivered-queue: chat.message.delivered.queue
+    delivered-routing-key: message.delivered
+    read-queue: chat.message.read.queue
+    read-routing-key: message.read
