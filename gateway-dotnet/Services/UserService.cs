@@ -20,6 +20,11 @@ public sealed class UserService : IUserService
         return await _userRepository.GetByIdAsync(id, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        return await _userRepository.GetAllAsync(cancellationToken);
+    }
+
     public async Task<User> FindOrCreateGoogleUserAsync(
         GoogleUserInfoResponse googleUser,
         CancellationToken cancellationToken)

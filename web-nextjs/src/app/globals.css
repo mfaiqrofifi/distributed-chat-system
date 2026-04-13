@@ -529,6 +529,23 @@ button {
   gap: 14px;
 }
 
+.follow-group {
+  display: grid;
+  gap: 14px;
+}
+
+.follow-group__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.follow-group__title span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .follow-row {
   gap: 18px;
   padding: 18px;
@@ -547,6 +564,10 @@ button {
 
 .follow-row__actions {
   gap: 10px;
+}
+
+.follow-row__actions .wa-primary-button {
+  padding-inline: 20px;
 }
 
 .icon-button--back {

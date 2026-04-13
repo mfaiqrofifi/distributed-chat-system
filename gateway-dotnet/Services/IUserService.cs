@@ -7,5 +7,7 @@ public interface IUserService
 {
     Task<User?> GetByIdAsync(Guid id, CancellationToken cancellationToken);
 
+    Task<IReadOnlyList<User>> GetAllAsync(CancellationToken cancellationToken);
+
     Task<User> FindOrCreateGoogleUserAsync(GoogleUserInfoResponse googleUser, CancellationToken cancellationToken);
 }
