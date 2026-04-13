@@ -10,11 +10,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   buildConversationId,
+  clearCurrentUserId,
   clearToken,
   fallbackContactName,
   loadContacts,
   loadToken,
   saveContacts,
+  saveCurrentUserId,
   StoredContact,
   upsertContact,
 } from "@/lib/chat-storage";
@@ -54,8 +56,6 @@ type RealtimeMessagePayload = {
   timestamp?: string;
 };
 
-const gatewayBaseUrl =
-  process.env.NEXT_PUBLIC_GATEWAY_BASE_URL ?? "http://localhost:5001";
 const realtimeBaseUrl =
   process.env.NEXT_PUBLIC_REALTIME_BASE_URL ?? "http://localhost:5002";
 
@@ -95,6 +95,10 @@ function statusIcon(status: string) {
   return "Sent";
 }
 
+function renderAvatar(name: string) {
+  return name.slice(0, 1).toUpperCase();
+}
+
 export function ChatApp() {
   const router = useRouter();
   const [token, setToken] = useState("");
@@ -124,6 +128,22 @@ export function ChatApp() {
     return buildConversationId(profile.id, selectedContact.id);
   }, [profile, selectedContact]);
 
+  const selectedContactSnapshot = useMemo(() => {
+    if (!selectedContact) {
+      return null;
+    }
+
+    return {
+      id: selectedContact.id,
+      name: selectedContact.name,
+      email: selectedContact.email,
+      avatarUrl: selectedContact.avatarUrl,
+      followed: selectedContact.followed,
+      lastMessageAt: selectedContact.lastMessageAt,
+      lastMessagePreview: selectedContact.lastMessagePreview,
+    };
+  }, [selectedContact]);
+
   const sortedContacts = useMemo(() => {
     return [...contacts].sort((left, right) => {
       const leftAt = left.lastMessageAt ? new Date(left.lastMessageAt).getTime() : 0;
@@ -143,9 +163,6 @@ export function ChatApp() {
 
   useEffect(() => {
     const storedToken = loadToken();
-    const storedContacts = loadContacts();
-
-    setContacts(storedContacts);
 
     if (!storedToken) {
       router.replace("/login");
@@ -154,10 +171,6 @@ export function ChatApp() {
 
     setToken(storedToken);
   }, [router]);
-
-  useEffect(() => {
-    saveContacts(contacts);
-  }, [contacts]);
 
   useEffect(() => {
     if (!token) {
@@ -182,10 +195,14 @@ export function ChatApp() {
         }
 
         if (!cancelled) {
-          setProfile(payload as CurrentUser);
+          const nextProfile = payload as CurrentUser;
+          saveCurrentUserId(nextProfile.id);
+          setProfile(nextProfile);
+          setContacts(loadContacts(nextProfile.id));
         }
       } catch {
         clearToken();
+        clearCurrentUserId();
         if (!cancelled) {
           router.replace("/login");
         }
@@ -210,6 +227,14 @@ export function ChatApp() {
 
     setContacts((current) => current.filter((contact) => contact.id !== profile.id));
   }, [profile]);
+
+  useEffect(() => {
+    if (!profile) {
+      return;
+    }
+
+    saveContacts(contacts, profile.id);
+  }, [contacts, profile]);
 
   useEffect(() => {
     if (!profile || !token) {
@@ -283,7 +308,7 @@ export function ChatApp() {
   }, []);
 
   useEffect(() => {
-    if (!token || !activeConversationId || !selectedContact) {
+    if (!token || !activeConversationId || !selectedContactSnapshot) {
       setMessages([]);
       return;
     }
@@ -312,18 +337,34 @@ export function ChatApp() {
 
         if (!cancelled) {
           const loadedMessages = payload as ChatMessage[];
-          setMessages(loadedMessages);
+          setMessages((current) => {
+            const sameLength = current.length === loadedMessages.length;
+            const sameItems =
+              sameLength &&
+              current.every((message, index) => {
+                const nextMessage = loadedMessages[index];
+                return (
+                  message.id === nextMessage.id &&
+                  message.status === nextMessage.status &&
+                  message.content === nextMessage.content &&
+                  message.createdAt === nextMessage.createdAt
+                );
+              });
+
+            return sameItems ? current : loadedMessages;
+          });
 
           const latest = loadedMessages.at(-1);
           setContacts((current) =>
             upsertContact(current, {
-              id: selectedContact.id,
-              name: selectedContact.name,
-              email: selectedContact.email,
-              followed: selectedContact.followed,
+              id: selectedContactSnapshot.id,
+              name: selectedContactSnapshot.name,
+              email: selectedContactSnapshot.email,
+              avatarUrl: selectedContactSnapshot.avatarUrl,
+              followed: selectedContactSnapshot.followed,
               unreadCount: 0,
-              lastMessageAt: latest?.createdAt ?? selectedContact.lastMessageAt,
-              lastMessagePreview: latest?.content ?? selectedContact.lastMessagePreview,
+              lastMessageAt: latest?.createdAt ?? selectedContactSnapshot.lastMessageAt,
+              lastMessagePreview: latest?.content ?? selectedContactSnapshot.lastMessagePreview,
             }),
           );
         }
@@ -343,7 +384,7 @@ export function ChatApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeConversationId, selectedContact, token]);
+  }, [activeConversationId, selectedContactSnapshot, token]);
 
   useEffect(() => {
     if (contacts.length === 0) {
@@ -463,6 +504,7 @@ export function ChatApp() {
 
   const handleLogout = () => {
     clearToken();
+    clearCurrentUserId();
     router.replace("/login");
   };
 
@@ -544,7 +586,7 @@ export function ChatApp() {
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={profile.avatarUrl} alt={profile.name} />
               ) : (
-                <span>{profile.name.slice(0, 1).toUpperCase()}</span>
+                <span>{renderAvatar(profile.name)}</span>
               )}
             </div>
             <div className="wa-profile__copy">
@@ -554,24 +596,28 @@ export function ChatApp() {
           </div>
 
           <div className="wa-header-actions">
-            <Link href="/follow" className="icon-button" title="Follow contacts">
+            <Link href="/follow" className="icon-button icon-button--ghost" title="Manage contacts">
               +
             </Link>
-            <button className="icon-button" onClick={handleLogout} title="Logout">
-              ↗
+            <button
+              className="icon-button icon-button--text"
+              onClick={handleLogout}
+              title="Logout"
+            >
+              Log out
             </button>
           </div>
         </header>
 
         <div className="wa-sidebar__tabs">
           <p>Chats</p>
-          <Link href="/follow">Manage contacts</Link>
+          <Link href="/follow">Contacts</Link>
         </div>
 
         <div className="wa-chat-list">
           {sortedContacts.length === 0 ? (
             <div className="wa-empty">
-              Follow seseorang dulu, atau tunggu pesan masuk supaya riwayat chat muncul di sini.
+              Follow someone first, or wait for a new incoming message so your chat list starts filling up.
             </div>
           ) : (
             sortedContacts.map((contact) => {
@@ -584,7 +630,12 @@ export function ChatApp() {
                   onClick={() => handleSelectContact(contact.id)}
                 >
                   <div className="wa-avatar wa-avatar--list">
-                    <span>{contact.name.slice(0, 1).toUpperCase()}</span>
+                    {contact.avatarUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={contact.avatarUrl} alt={contact.name} />
+                    ) : (
+                      <span>{renderAvatar(contact.name)}</span>
+                    )}
                     {presence?.isOnline ? <span className="wa-online-dot" /> : null}
                   </div>
 
@@ -618,11 +669,16 @@ export function ChatApp() {
                   onClick={() => setShowMobileChat(false)}
                   aria-label="Back"
                 >
-                  ←
+                  Back
                 </button>
 
                 <div className="wa-avatar wa-avatar--list">
-                  <span>{selectedContact.name.slice(0, 1).toUpperCase()}</span>
+                  {selectedContact.avatarUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={selectedContact.avatarUrl} alt={selectedContact.name} />
+                  ) : (
+                    <span>{renderAvatar(selectedContact.name)}</span>
+                  )}
                   {presenceMap[selectedContact.id]?.isOnline ? <span className="wa-online-dot" /> : null}
                 </div>
 
@@ -642,7 +698,7 @@ export function ChatApp() {
                 <div className="wa-empty">Loading conversation...</div>
               ) : messages.length === 0 ? (
                 <div className="wa-empty">
-                  Belum ada pesan dengan {selectedContact.name}. Mulai ngobrol dulu.
+                  No messages with {selectedContact.name} yet. Say hello first.
                 </div>
               ) : (
                 messages.map((message) => {
@@ -676,7 +732,7 @@ export function ChatApp() {
                 onClick={handleSendMessage}
                 disabled={sending}
               >
-                {sending ? "..." : "➤"}
+                {sending ? "..." : "Send"}
               </button>
             </footer>
           </>
@@ -684,13 +740,13 @@ export function ChatApp() {
           <div className="wa-blank">
             <div className="wa-blank__card">
               <p className="wa-blank__eyebrow">Welcome back</p>
-              <h1>Open a chat to start talking.</h1>
+              <h1>Pick a chat and keep the conversation flowing.</h1>
               <p>
-                Contact yang kamu follow akan muncul di sini. Kalau ada orang chat kamu duluan,
-                dia juga akan otomatis masuk ke history.
+                People you follow will appear here. If someone messages you first,
+                they will also be added to your chat history automatically.
               </p>
               <Link href="/follow" className="wa-primary-link">
-                Go to follow page
+                Explore contacts
               </Link>
             </div>
           </div>

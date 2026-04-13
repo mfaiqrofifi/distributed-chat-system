@@ -9,7 +9,7 @@ const gatewayBaseUrl =
 
 export function LoginPage() {
   const router = useRouter();
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const storedToken = loadToken();
@@ -23,7 +23,6 @@ export function LoginPage() {
       : window.location.hash;
 
     if (!hash) {
-      setLoading(false);
       return;
     }
 
@@ -36,11 +35,10 @@ export function LoginPage() {
       router.replace("/");
       return;
     }
-
-    setLoading(false);
   }, [router]);
 
   const handleLogin = () => {
+    setLoading(true);
     const returnUrl = `${window.location.origin}/login`;
     const loginUrl = `${gatewayBaseUrl}/api/auth/google/login?returnUrl=${encodeURIComponent(returnUrl)}`;
     window.location.href = loginUrl;

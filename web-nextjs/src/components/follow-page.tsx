@@ -4,9 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
+  clearCurrentUserId,
   loadContacts,
   loadToken,
   saveContacts,
+  saveCurrentUserId,
   StoredContact,
   upsertContact,
 } from "@/lib/chat-storage";
@@ -27,6 +29,7 @@ type PresenceResponse = {
 
 export function FollowPage() {
   const router = useRouter();
+  const [currentUserId, setCurrentUserId] = useState("");
   const [contacts, setContacts] = useState<StoredContact[]>([]);
   const [users, setUsers] = useState<DirectoryUser[]>([]);
   const [presenceMap, setPresenceMap] = useState<Record<string, PresenceResponse>>({});
@@ -40,14 +43,34 @@ export function FollowPage() {
       return;
     }
 
-    setContacts(loadContacts());
-
     let cancelled = false;
 
     const loadUsers = async () => {
       setLoading(true);
 
       try {
+        const meResponse = await fetch("/api/chat/me", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const mePayload = await meResponse.json();
+
+        if (!meResponse.ok) {
+          throw new Error(mePayload?.message ?? "Failed to load profile.");
+        }
+
+        const resolvedUserId = (mePayload?.id as string | undefined) ?? "";
+        if (!resolvedUserId) {
+          throw new Error("Current user id is missing.");
+        }
+
+        if (!cancelled) {
+          saveCurrentUserId(resolvedUserId);
+          setCurrentUserId(resolvedUserId);
+          setContacts(loadContacts(resolvedUserId));
+        }
+
         const response = await fetch("/api/chat/users", {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -64,6 +87,7 @@ export function FollowPage() {
           setUsers((payload ?? []) as DirectoryUser[]);
         }
       } catch {
+        clearCurrentUserId();
         if (!cancelled) {
           setUsers([]);
         }
@@ -82,8 +106,12 @@ export function FollowPage() {
   }, [router]);
 
   useEffect(() => {
-    saveContacts(contacts);
-  }, [contacts]);
+    if (!currentUserId) {
+      return;
+    }
+
+    saveContacts(contacts, currentUserId);
+  }, [contacts, currentUserId]);
 
   useEffect(() => {
     if (users.length === 0) {
@@ -141,6 +169,11 @@ export function FollowPage() {
 
     return [...users]
       .filter((user) => {
+        const alreadyFollowed = followedContacts.some((contact) => contact.id === user.id);
+        if (alreadyFollowed) {
+          return false;
+        }
+
         if (!normalizedSearch) {
           return true;
         }
@@ -160,61 +193,108 @@ export function FollowPage() {
 
         return left.name.localeCompare(right.name);
       });
-  }, [presenceMap, search, users]);
+  }, [followedContacts, presenceMap, search, users]);
 
   const handleFollow = (user: DirectoryUser) => {
-    setContacts((current) =>
-      upsertContact(current, {
+    setContacts((current) => {
+      const nextContacts = upsertContact(current, {
         id: user.id,
         name: user.name,
         email: user.email,
         avatarUrl: user.avatarUrl,
         followed: true,
-      }),
-    );
+      });
+
+      saveContacts(nextContacts, currentUserId);
+      return nextContacts;
+    });
   };
 
   const handleUnfollow = (contactId: string) => {
-    setContacts((current) =>
-      current.map((contact) =>
+    setContacts((current) => {
+      const nextContacts = current.map((contact) =>
         contact.id === contactId
           ? {
               ...contact,
               followed: false,
             }
           : contact,
-      ),
-    );
+      );
+
+      saveContacts(nextContacts, currentUserId);
+      return nextContacts;
+    });
+  };
+
+  const handleOpenChat = (contact: {
+    id: string;
+    name: string;
+    email?: string;
+    avatarUrl?: string;
+  }) => {
+    setContacts((current) => {
+      const nextContacts = upsertContact(current, {
+        id: contact.id,
+        name: contact.name,
+        email: contact.email,
+        avatarUrl: contact.avatarUrl,
+        followed: true,
+      });
+
+      saveContacts(nextContacts, currentUserId);
+      return nextContacts;
+    });
+
+    router.push(`/?chat=${contact.id}`);
   };
 
   return (
     <main className="follow-shell">
       <section className="follow-panel">
-        <header className="follow-panel__header">
-          <div>
+        <header className="follow-hero">
+          <div className="follow-hero__copy">
             <p className="follow-panel__eyebrow">Follow contacts</p>
-            <h1>Choose who you want to talk to</h1>
+            <h1>People</h1>
             <p>
-              Sekarang kamu bisa lihat user internal yang sudah pernah login. Yang online
-              bakal naik ke atas list, lalu tinggal klik follow.
+              Cari user yang pernah login, follow sekali, lalu langsung buka chat.
             </p>
           </div>
 
-          <Link href="/" className="wa-primary-link">
-            Back to chats
-          </Link>
+          <div className="follow-hero__actions">
+            <Link href="/" className="wa-primary-link">
+              Back to chats
+            </Link>
+          </div>
         </header>
 
-        <div className="follow-form">
-          <input
-            className="wa-input"
-            placeholder="Search by name or email"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
+        <div className="follow-toolbar">
+          <div className="follow-summary-card">
+            <strong>{visibleUsers.length}</strong>
+            <span>available now</span>
+          </div>
+          <div className="follow-summary-card">
+            <strong>{Object.values(presenceMap).filter((presence) => presence.isOnline).length}</strong>
+            <span>online</span>
+          </div>
+          <div className="follow-summary-card">
+            <strong>{followedContacts.length}</strong>
+            <span>following</span>
+          </div>
         </div>
 
-        <div className="follow-list">
+        <div className="follow-form">
+          <label className="follow-search">
+            <span className="follow-search__icon">Search</span>
+            <input
+              className="wa-input"
+              placeholder="Search by name or email"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </label>
+        </div>
+
+        <div className="follow-list follow-list--grid">
           <section className="follow-group">
             <div className="follow-group__title">
               <strong>Available people</strong>
@@ -246,15 +326,24 @@ export function FollowPage() {
                       <span>{user.email}</span>
                     </div>
                     <div className="follow-row__actions">
-                      {isFollowed ? (
-                        <Link href={`/?chat=${user.id}`} className="wa-secondary-link">
-                          Open chat
-                        </Link>
-                      ) : (
+                      {isFollowed ? null : (
                         <button className="wa-primary-button" onClick={() => handleFollow(user)}>
                           Follow
                         </button>
                       )}
+                      <button
+                        className="wa-secondary-link"
+                        onClick={() =>
+                          handleOpenChat({
+                            id: user.id,
+                            name: user.name,
+                            email: user.email,
+                            avatarUrl: user.avatarUrl,
+                          })
+                        }
+                      >
+                        Open chat
+                      </button>
                     </div>
                   </article>
                 );
@@ -287,9 +376,19 @@ export function FollowPage() {
                     <span>{contact.email ?? contact.id}</span>
                   </div>
                   <div className="follow-row__actions">
-                    <Link href={`/?chat=${contact.id}`} className="wa-secondary-link">
+                    <button
+                      className="wa-secondary-link"
+                      onClick={() =>
+                        handleOpenChat({
+                          id: contact.id,
+                          name: contact.name,
+                          email: contact.email,
+                          avatarUrl: contact.avatarUrl,
+                        })
+                      }
+                    >
                       Open chat
-                    </Link>
+                    </button>
                     <button className="wa-text-button" onClick={() => handleUnfollow(contact.id)}>
                       Unfollow
                     </button>

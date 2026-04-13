@@ -11,7 +11,7 @@ export const realtimeBaseUrl =
   process.env.NEXT_PUBLIC_REALTIME_BASE_URL ??
   defaultRealtimeBaseUrl;
 
-export async function forwardJson<T>(
+export async function forwardJson(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
