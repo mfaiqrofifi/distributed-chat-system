@@ -99,19 +99,19 @@ Berikut kemampuan yang saat ini sudah ada di repository ini.
 
 ```text
 .
-├── chat-service-java/
-├── docker/
-│   └── postgres/
-│       └── init/
-│           └── 01-create-databases.sql
-├── gateway-dotnet/
-├── realtime-dotnet/
-├── web-nextjs/
-├── .env
-├── .env.example
-├── .gitignore
-├── docker-compose.yml
-└── README.md
+|-- chat-service-java/
+|-- docker/
+|   `-- postgres/
+|       `-- init/
+|           `-- 01-create-databases.sql
+|-- gateway-dotnet/
+|-- realtime-dotnet/
+|-- web-nextjs/
+|-- .env
+|-- .env.example
+|-- .gitignore
+|-- docker-compose.yml
+`-- README.md
 ```
 
 ### Main folders
@@ -133,130 +133,102 @@ Berikut kemampuan yang saat ini sudah ada di repository ini.
 
 ## 3. Architecture Overview
 
-### High-level architecture
+### High-Level View
 
-```text
-Browser / Next.js UI
-        |
-        v
-  gateway-dotnet
-        |
-        v
- chat-service-java ----> PostgreSQL
-        |
-        v
-     RabbitMQ
-        |
-        v
- realtime-dotnet ----> SignalR clients
-        |
-        v
-       Redis
+```mermaid
+flowchart LR
+    User[Browser User] --> Web[Next.js Chat Web]
+    Web --> Gateway[gateway-dotnet]
+    Gateway --> Chat[chat-service-java]
+    Chat --> Postgres[(PostgreSQL)]
+    Chat --> Rabbit[(RabbitMQ)]
+    Rabbit --> Realtime[realtime-dotnet]
+    Realtime --> Redis[(Redis)]
+    Realtime --> SignalR[SignalR Clients]
+    Swagger[Swagger or curl tests] -. local API tests .-> Gateway
 ```
 
-### Responsibilities by service
+### Request Flow
 
-```text
-gateway-dotnet
-- Google OAuth login
-- internal JWT issuing
-- current user profile
-- user directory
-- message API proxy
-- per-user message rate limiting
-
-chat-service-java
-- save messages
-- load conversation history
-- publish message.created
-- consume message.delivered
-- consume message.read
-- update message status
-
-realtime-dotnet
-- SignalR hub
-- user connection tracking
-- RabbitMQ consumer
-- realtime dispatch
-- delivered/read event publishing
-- Redis presence
-
-web-nextjs
-- login page
-- contact management page
-- chat page
-- SSR proxy routes to backend
+```mermaid
+flowchart TD
+    Start[Incoming user action] --> Web[web-nextjs]
+    Web --> Auth{Auth action or chat action?}
+    Auth -->|Login and profile| Gateway[gateway-dotnet]
+    Auth -->|Send message| Gateway
+    Gateway -->|OAuth and JWT| Google[Google OAuth]
+    Gateway -->|Forward message API| Chat[chat-service-java]
+    Chat -. saves and reads .-> Postgres[(PostgreSQL)]
+    Chat -. publishes events .-> Rabbit[(RabbitMQ)]
+    Rabbit -. consumes events .-> Realtime[realtime-dotnet]
+    Realtime -. tracks presence .-> Redis[(Redis)]
+    Realtime -. pushes events .-> ClientResult[Connected browser clients]
 ```
 
-### OAuth and frontend integration
+### Local vs Docker Mode
 
-```text
-User clicks "Continue with Google"
-    -> web-nextjs redirects to gateway /api/auth/google/login
-    -> Google login page
-    -> gateway callback receives Google auth code
-    -> gateway creates/finds internal user
-    -> gateway issues JWT
-    -> gateway redirects back to frontend /login#oauth=success&accessToken=...
-    -> frontend stores JWT in localStorage
-    -> frontend loads /api/chat/me proxy
+```mermaid
+flowchart TD
+    Need[Need to run the project] --> Choice{How do you want to run it?}
+    Choice -->|Everything together| Docker[Use docker-compose.yml]
+    Choice -->|Service by service| Manual[Run each app locally]
+    Docker -. starts .-> PgDocker[Postgres container]
+    Docker -. starts .-> RabbitDocker[RabbitMQ container]
+    Docker -. starts .-> RedisDocker[Redis container]
+    Docker -. starts .-> BackendDocker[Gateway, Java, Realtime containers]
+    Manual -. expects .-> PgLocal[Local PostgreSQL]
+    Manual -. expects .-> RabbitLocal[Local RabbitMQ]
+    Manual -. expects .-> RedisLocal[Local Redis]
+    Manual -. runs .-> AppsLocal[dotnet, java, and next dev servers]
 ```
 
 ## 4. End-to-End Message Flow
 
-### Flow 1: send message
+### OAuth Flow
 
-```text
-Frontend
-  -> gateway-dotnet POST /api/messages
-  -> gateway validates JWT
-  -> gateway derives senderId from JWT
-  -> gateway forwards to chat-service-java
-  -> chat-service-java saves message as "sent"
-  -> chat-service-java publishes message.created
+```mermaid
+flowchart TD
+    Start[User clicks Continue with Google] --> Login[web-nextjs /login]
+    Login --> Gateway[GET gateway /api/auth/google/login]
+    Gateway --> Google[Google OAuth page]
+    Google --> Callback[gateway callback receives code]
+    Callback --> UserSync[Find or create internal user]
+    UserSync --> Jwt[Issue internal JWT]
+    Jwt --> Redirect[Redirect to frontend with access token]
+    Redirect --> Store[Frontend stores JWT]
+    Store --> Profile[Frontend loads /api/chat/me]
 ```
 
-### Flow 2: realtime delivery
+### Message Delivery Flow
 
-```text
-RabbitMQ queue chat.message.created.queue
-  -> realtime-dotnet consumes message.created
-  -> realtime-dotnet finds receiver connection(s)
-  -> if receiver online:
-       send SignalR event message.received
-       publish message.delivered
-  -> if receiver offline:
-       log offline and continue safely
+```mermaid
+flowchart TD
+    Frontend[Frontend sends message] --> Gateway[POST gateway /api/messages]
+    Gateway --> Claims[Gateway validates JWT and derives senderId]
+    Claims --> Java[Forward request to chat-service-java]
+    Java --> Save[Save message with status sent]
+    Save --> Created[Publish message.created]
+    Created --> Consume[realtime-dotnet consumes message.created]
+    Consume --> Online{Receiver online?}
+    Online -->|Yes| Push[Send SignalR message.received]
+    Push --> Delivered[Publish message.delivered]
+    Delivered --> DeliveredConsume[chat-service-java consumes delivered event]
+    DeliveredConsume --> DeliveredUpdate[Update status to delivered]
+    Online -->|No| Offline[Log receiver offline and continue]
 ```
 
-### Flow 3: delivered status
+### Read and Presence Flow
 
-```text
-RabbitMQ queue chat.message.delivered.queue
-  -> chat-service-java consumes message.delivered
-  -> update message.status from sent to delivered
-```
-
-### Flow 4: read status
-
-```text
-Frontend opens conversation
-  -> frontend calls realtime-dotnet POST /api/internal/messages/read
-  -> realtime-dotnet publishes message.read
-  -> chat-service-java consumes message.read
-  -> update message.status to read
-```
-
-### Flow 5: online presence
-
-```text
-Client connects to SignalR
-  -> realtime-dotnet stores connection
-  -> realtime-dotnet marks presence in Redis
-
-Client disconnects
-  -> realtime-dotnet removes/updates connection
-  -> realtime-dotnet updates lastSeen in Redis
+```mermaid
+flowchart TD
+    Connect[Client connects to SignalR] --> Track[Store user connection]
+    Track --> RedisOnline[Mark user online in Redis]
+    Open[Frontend opens conversation] --> ReadApi[POST realtime /api/internal/messages/read]
+    ReadApi --> PublishRead[realtime-dotnet publishes message.read]
+    PublishRead --> ConsumeRead[chat-service-java consumes message.read]
+    ConsumeRead --> UpdateRead[Update message status to read]
+    Disconnect[Client disconnects] --> Cleanup[Remove or update connection]
+    Cleanup --> LastSeen[Store lastSeenAt in Redis]
 ```
 
 ## 5. Service Details
@@ -1080,7 +1052,7 @@ docker compose down -v
 
 Bagian ini adalah langkah test yang merepresentasikan semua flow utama yang sudah dibangun.
 
-### Test A — health check
+### Test A - health check
 
 ```bash
 curl http://localhost:5001/api/health
@@ -1088,7 +1060,7 @@ curl http://localhost:8080/api/health
 curl http://localhost:5002/api/health
 ```
 
-### Test B — login frontend
+### Test B - login frontend
 
 1. Buka `http://localhost:3010/login`
 2. Klik `Continue with Google`
@@ -1096,7 +1068,7 @@ curl http://localhost:5002/api/health
 4. Pastikan redirect kembali ke frontend
 5. Pastikan masuk ke halaman chat `/`
 
-### Test C — load contacts
+### Test C - load contacts
 
 1. Login dengan minimal 2 akun berbeda secara bergantian
 2. Buka `/follow`
@@ -1105,7 +1077,7 @@ curl http://localhost:5002/api/health
 5. Klik `Open chat`
 6. Pastikan chat muncul di sidebar halaman utama
 
-### Test D — send message from frontend
+### Test D - send message from frontend
 
 1. Login sebagai user A
 2. Open chat dengan user B
@@ -1115,7 +1087,7 @@ curl http://localhost:5002/api/health
    - message tersimpan di Java service
    - status awal `sent`
 
-### Test E — realtime delivery
+### Test E - realtime delivery
 
 1. Login user B di browser/tab lain
 2. Pastikan user B punya koneksi SignalR aktif
@@ -1125,7 +1097,7 @@ curl http://localhost:5002/api/health
    - `realtime-dotnet` publish `message.delivered`
    - `chat-service-java` mengubah status message menjadi `delivered`
 
-### Test F — read receipt
+### Test F - read receipt
 
 1. Buka conversation user B
 2. Frontend akan call endpoint internal read
@@ -1134,7 +1106,7 @@ curl http://localhost:5002/api/health
    - `chat-service-java` consume event
    - status message menjadi `read`
 
-### Test G — inspect message history directly
+### Test G - inspect message history directly
 
 Contoh:
 
@@ -1148,7 +1120,7 @@ Contoh status yang diharapkan:
 - `delivered`
 - `read`
 
-### Test H — presence check
+### Test H - presence check
 
 ```bash
 curl http://localhost:5002/api/presence/<user-id>
@@ -1164,7 +1136,7 @@ Response example:
 }
 ```
 
-### Test I — RabbitMQ queue inspection
+### Test I - RabbitMQ queue inspection
 
 Management UI:
 

@@ -7,7 +7,7 @@ import {
 } from "@microsoft/signalr";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildConversationId,
   clearCurrentUserId,
@@ -58,6 +58,20 @@ type RealtimeMessagePayload = {
 
 const realtimeBaseUrl =
   process.env.NEXT_PUBLIC_REALTIME_BASE_URL ?? "http://localhost:5002";
+
+async function readJsonSafely<T>(response: Response): Promise<T | null> {
+  const raw = await response.text();
+
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
 
 function formatMessageTime(timestamp?: string) {
   if (!timestamp) {
@@ -119,6 +133,12 @@ export function ChatApp() {
     () => contacts.find((contact) => contact.id === selectedContactId) ?? null,
     [contacts, selectedContactId],
   );
+
+  const expireSession = useCallback(() => {
+    clearToken();
+    clearCurrentUserId();
+    router.replace("/login");
+  }, [router]);
 
   const activeConversationId = useMemo(() => {
     if (!profile || !selectedContact) {
@@ -188,10 +208,10 @@ export function ChatApp() {
             Authorization: `Bearer ${token}`,
           },
         });
-        const payload = await response.json();
+        const payload = await readJsonSafely<CurrentUser & { message?: string }>(response);
 
         if (!response.ok) {
-          throw new Error(payload.message ?? "Failed to load profile.");
+          throw new Error(payload?.message ?? "Failed to load profile.");
         }
 
         if (!cancelled) {
@@ -329,14 +349,24 @@ export function ChatApp() {
             },
           },
         );
-        const payload = await response.json();
+        const payload = await readJsonSafely<ChatMessage[] | { message?: string }>(response);
+
+        if (response.status === 401) {
+          if (!cancelled) {
+            expireSession();
+          }
+          return;
+        }
 
         if (!response.ok) {
-          throw new Error(payload.message ?? "Failed to load conversation.");
+          throw new Error(
+            (!Array.isArray(payload) ? payload?.message : undefined) ??
+              "Failed to load conversation.",
+          );
         }
 
         if (!cancelled) {
-          const loadedMessages = payload as ChatMessage[];
+          const loadedMessages = Array.isArray(payload) ? payload : [];
           setMessages((current) => {
             const sameLength = current.length === loadedMessages.length;
             const sameItems =
@@ -384,7 +414,7 @@ export function ChatApp() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [activeConversationId, selectedContactSnapshot, token]);
+  }, [activeConversationId, expireSession, selectedContactSnapshot, token]);
 
   useEffect(() => {
     if (contacts.length === 0) {
@@ -399,9 +429,9 @@ export function ChatApp() {
         contacts.map(async (contact) => {
           try {
             const response = await fetch(`/api/chat/presence/${encodeURIComponent(contact.id)}`);
-            const payload = (await response.json()) as PresenceResponse;
+            const payload = await readJsonSafely<PresenceResponse>(response);
 
-            if (!response.ok) {
+            if (!response.ok || !payload) {
               return null;
             }
 
@@ -543,10 +573,18 @@ export function ChatApp() {
           content: messageInput.trim(),
         }),
       });
-      const payload = await response.json();
+      const payload = await readJsonSafely<ChatMessage | { message?: string }>(response);
+
+      if (response.status === 401) {
+        expireSession();
+        return;
+      }
 
       if (!response.ok) {
-        throw new Error(payload.message ?? "Failed to send message.");
+        throw new Error(
+          (!payload || Array.isArray(payload) ? undefined : payload.message) ??
+            "Failed to send message.",
+        );
       }
 
       const sentMessage = payload as ChatMessage;
