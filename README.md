@@ -25,8 +25,13 @@ serta 3 komponen infrastructure:
 - RabbitMQ
 - Redis
 
+## Demo Preview
+
+<video src="media/chat-demo.mp4" autoplay loop muted playsinline width="100%"></video>
+
 ## Table of Contents
 
+- [Demo Preview](#demo-preview)
 - [1. What We Built](#1-what-we-built)
 - [2. Repository Structure](#2-repository-structure)
 - [3. Architecture Overview](#3-architecture-overview)
