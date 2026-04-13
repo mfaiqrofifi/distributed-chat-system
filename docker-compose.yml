@@ -143,6 +143,8 @@ services:
       Redis__PresenceKeyPrefix: presence
       Redis__PresenceTtlSeconds: 120
       Gateway__BaseUrl: http://gateway-dotnet:5001
+      Cors__AllowedOrigins__0: http://localhost:3000
+      Cors__AllowedOrigins__1: http://localhost:3010
     ports:
       - "5002:5002"
     networks:

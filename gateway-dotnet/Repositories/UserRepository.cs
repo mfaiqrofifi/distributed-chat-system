@@ -20,6 +20,15 @@ public sealed class UserRepository : IUserRepository
             .FirstOrDefaultAsync(user => user.Id == id, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<User>> GetAllAsync(CancellationToken cancellationToken)
+    {
+        return await _dbContext.Users
+            .AsNoTracking()
+            .OrderBy(user => user.Name)
+            .ThenBy(user => user.Email)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<User?> GetByProviderSubjectAsync(string provider, string subject, CancellationToken cancellationToken)
     {
         return await _dbContext.Users

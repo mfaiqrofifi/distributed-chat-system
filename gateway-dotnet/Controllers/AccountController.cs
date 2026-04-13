@@ -52,4 +52,30 @@ public sealed class AccountController : ControllerBase
             Provider = user.OAuthProvider
         });
     }
+
+    [Authorize]
+    [HttpGet("users")]
+    public async Task<IActionResult> GetUsers(CancellationToken cancellationToken)
+    {
+        var currentUserId = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+            ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+        Guid.TryParse(currentUserId, out var parsedCurrentUserId);
+
+        var users = await _userService.GetAllAsync(cancellationToken);
+
+        var response = users
+            .Where(user => user.Id != parsedCurrentUserId)
+            .Select(user => new UserListItemResponse
+            {
+                Id = user.Id,
+                Email = user.Email,
+                Name = user.Name,
+                AvatarUrl = user.AvatarUrl,
+                Provider = user.OAuthProvider
+            })
+            .ToList();
+
+        return Ok(response);
+    }
 }
